@@ -81,12 +81,35 @@ export async function onRequestPost(context) {
   }
 }
 
+// Handle DELETE request to clear all data
+export async function onRequestDelete(context) {
+  try {
+    // Delete the samples key from KV
+    await context.env.WARDRIVE_DATA.delete('samples');
+    
+    return new Response(JSON.stringify({ 
+      success: true,
+      message: 'All data cleared'
+    }), {
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+      },
+    });
+  } catch (error) {
+    return new Response(JSON.stringify({ error: error.message }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+}
+
 // Handle CORS preflight
 export async function onRequestOptions() {
   return new Response(null, {
     headers: {
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type',
     },
   });

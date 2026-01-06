@@ -84,6 +84,32 @@
             font-size: 13px;
         }
         
+        .clear-button {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid #444;
+        }
+        
+        .clear-button button {
+            width: 100%;
+            padding: 8px;
+            background: #d32f2f;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+        }
+        
+        .clear-button button:hover {
+            background: #b71c1c;
+        }
+        
+        body.light-theme .clear-button {
+            border-top-color: #ddd;
+        }
+        
         .loading {
             position: absolute;
             top: 50%;
@@ -229,6 +255,10 @@
                 <input type="checkbox" id="toggle-samples" onchange="toggleSamples()">
                 <label for="toggle-samples">Show Samples</label>
             </div>
+        </div>
+        
+        <div class="clear-button">
+            <button onclick="clearMapData()">Clear All Data</button>
         </div>
     </div>
 
@@ -562,6 +592,29 @@
             } catch (error) {
                 console.error('Error loading data:', error);
                 document.getElementById('loading').textContent = 'Error loading data. Check console.';
+            }
+        }
+        
+        // Clear all map data
+        async function clearMapData() {
+            if (!confirm('Are you sure you want to delete ALL wardrive data? This cannot be undone!')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/samples', {
+                    method: 'DELETE'
+                });
+                
+                if (response.ok) {
+                    alert('All data cleared successfully!');
+                    location.reload();
+                } else {
+                    alert('Failed to clear data. Please try again.');
+                }
+            } catch (error) {
+                console.error('Error clearing data:', error);
+                alert('Error clearing data: ' + error.message);
             }
         }
         
