@@ -278,10 +278,6 @@
             <span class="stat-value" id="unique-nodes">0</span>
         </div>
         <div class="stat">
-            <span class="stat-label">Avg RSSI:</span>
-            <span class="stat-value" id="avg-rssi">N/A</span>
-        </div>
-        <div class="stat">
             <span class="stat-label">Last Update:</span>
             <span class="stat-value" id="last-update">Never</span>
         </div>
@@ -545,8 +541,6 @@
                         samples: 0,
                         received: 0,  // Successful pings
                         lost: 0,      // Failed pings
-                        totalRssi: 0,
-                        rssiCount: 0,
                         nodes: new Set()
                     };
                 }
@@ -561,12 +555,6 @@
                     coverage[hash].lost++;
                 }
                 
-                // Convert RSSI to number and check if valid
-                const rssi = Number(sample.rssi);
-                if (!isNaN(rssi) && rssi !== 0) {
-                    coverage[hash].totalRssi += rssi;
-                    coverage[hash].rssiCount++;
-                }
                 if (sample.nodeId) {
                     coverage[hash].nodes.add(sample.nodeId);
                 }
@@ -594,8 +582,6 @@
                 
                 // Track unique nodes
                 const uniqueNodes = new Set();
-                let totalRssi = 0;
-                let rssiCount = 0;
                 
                 // Aggregate coverage
                 const coverage = aggregateCoverage(data.samples);
@@ -611,8 +597,6 @@
                 
                 // Draw coverage squares
                 coverage.forEach(cell => {
-                    // Only calculate avg RSSI if we have RSSI values
-                    const avgRssi = cell.rssiCount > 0 ? cell.totalRssi / cell.rssiCount : null;
                     const bounds = geohashToBounds(cell.hash);
                     
                     // Use ping success/failure logic (matching Android app)
@@ -641,7 +625,6 @@
                             <div><span class="popup-label">Samples:</span><strong>${cell.samples}</strong></div>
                             <div><span class="popup-label">Success Rate:</span><strong>${reliabilityText}</strong></div>
                             <div><span class="popup-label">Received:</span><strong style="color: #00ff00">${cell.received}</strong> / Lost: <strong style="color: #ff0000">${cell.lost}</strong></div>
-                            <div><span class="popup-label">Avg RSSI:</span>${avgRssi !== null ? avgRssi.toFixed(1) + ' dBm' : 'N/A'}</div>
                             <div><span class="popup-label">Nodes:</span>${cell.nodes.size}</div>
                             <div><span class="popup-label">Repeaters:</span>${nodePrefixes || 'None'}</div>
                         </div>
@@ -660,11 +643,6 @@
                     
                     uniqueNodes.add(sample.nodeId);
                     
-                    if (sample.rssi) {
-                        totalRssi += sample.rssi;
-                        rssiCount++;
-                    }
-                    
                     const marker = L.circleMarker([lat, lng], {
                         radius: 4,
                         fillColor: '#00e676',
@@ -677,8 +655,6 @@
                     const popupContent = `
                         <div class="popup-content">
                             <div><span class="popup-label">Node:</span><strong>${sample.nodeId || 'Unknown'}</strong></div>
-                            <div><span class="popup-label">RSSI:</span>${sample.rssi || 'N/A'} dBm</div>
-                            <div><span class="popup-label">SNR:</span>${sample.snr || 'N/A'} dB</div>
                             <div><span class="popup-label">Time:</span>${new Date(sample.timestamp).toLocaleString()}</div>
                         </div>
                     `;
@@ -690,8 +666,6 @@
                 // Update stats
                 document.getElementById('total-samples').textContent = data.samples.length;
                 document.getElementById('unique-nodes').textContent = uniqueNodes.size;
-                document.getElementById('avg-rssi').textContent = 
-                    rssiCount > 0 ? `${(totalRssi / rssiCount).toFixed(1)} dBm` : 'N/A';
                 document.getElementById('last-update').textContent = new Date().toLocaleString();
                 
                 // Fit map to coverage
