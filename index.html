@@ -639,13 +639,6 @@
                 document.getElementById('unique-nodes').textContent = uniqueNodes.size;
                 document.getElementById('last-update').textContent = new Date().toLocaleString();
                 
-                // Fit map to coverage
-                if (coverage.length > 0) {
-                    const allBounds = coverage.map(cell => geohashToBounds(cell.hash));
-                    const group = L.featureGroup(allBounds.map(b => L.rectangle(b)));
-                    map.fitBounds(group.getBounds(), { padding: [50, 50] });
-                }
-                
             } catch (error) {
                 console.error('Error loading data:', error);
                 document.getElementById('loading').textContent = 'Error loading data. Check console.';
