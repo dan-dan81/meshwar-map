@@ -110,6 +110,46 @@
             border-top-color: #ddd;
         }
         
+        .legend {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid #444;
+        }
+        
+        .legend-title {
+            font-size: 12px;
+            font-weight: 600;
+            margin-bottom: 6px;
+            color: #aaa;
+        }
+        
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin: 4px 0;
+            font-size: 11px;
+        }
+        
+        .legend-color {
+            width: 16px;
+            height: 16px;
+            border-radius: 2px;
+            margin-right: 6px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        body.light-theme .legend {
+            border-top-color: #ddd;
+        }
+        
+        body.light-theme .legend-title {
+            color: #666;
+        }
+        
+        body.light-theme .legend-color {
+            border-color: rgba(0, 0, 0, 0.2);
+        }
+        
         .loading {
             position: absolute;
             top: 50%;
@@ -254,6 +294,34 @@
             <div class="toggle-item">
                 <input type="checkbox" id="toggle-samples" onchange="toggleSamples()">
                 <label for="toggle-samples">Show Samples</label>
+            </div>
+        </div>
+        
+        <div class="legend">
+            <div class="legend-title">Coverage Legend</div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: #00ff00;"></div>
+                <span>≥80% - Very Reliable</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: #88ff00;"></div>
+                <span>50-80% - Usually Works</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: #ffff00;"></div>
+                <span>30-50% - Spotty</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: #ffaa00;"></div>
+                <span>10-30% - Rarely Works</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: #ff0000;"></div>
+                <span>&lt;10% - Dead Zone</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: #cccccc;"></div>
+                <span>No Ping Data</span>
             </div>
         </div>
         
@@ -423,23 +491,29 @@
             return [[bounds.sw.lat, bounds.sw.lon], [bounds.ne.lat, bounds.ne.lon]];
         }
         
-        // Color based on ping success/failure (matching Android app logic)
+        // Color based on ping success rate (Option 2: Balanced with thresholds)
         function getCoverageColor(received, lost) {
-            if (received > 0 && lost === 0) {
-                // Perfect coverage - all pings heard
-                return '#00ff00'; // Bright green
-            } else if (received > 0 && lost > 0) {
-                // Mixed coverage - some heard, some lost
-                const ratio = received / (received + lost);
-                if (ratio >= 0.7) return '#88ff00';  // Yellow-green - mostly heard
-                if (ratio >= 0.4) return '#ffff00';  // Yellow - spotty
-                return '#ffaa00'; // Orange - poor
-            } else if (lost > 0) {
-                // Dead zone - pings sent but not heard
-                return '#ff0000'; // Red
-            } else {
-                // No pings attempted here (just tracked location)
+            const total = received + lost;
+            
+            // No pings attempted here (just GPS tracking)
+            if (total === 0) {
                 return '#cccccc'; // Gray
+            }
+            
+            // Calculate success rate
+            const successRate = received / total;
+            
+            // Color based on success rate thresholds
+            if (successRate >= 0.80) {
+                return '#00ff00'; // Bright green - very reliable (80%+)
+            } else if (successRate >= 0.50) {
+                return '#88ff00'; // Yellow-green - usually works (50-80%)
+            } else if (successRate >= 0.30) {
+                return '#ffff00'; // Yellow - spotty (30-50%)
+            } else if (successRate >= 0.10) {
+                return '#ffaa00'; // Orange - rarely works (10-30%)
+            } else {
+                return '#ff0000'; // Red - dead zone (<10%)
             }
         }
         
@@ -557,9 +631,15 @@
                         .sort()
                         .join(', ');
                     
+                    // Calculate success rate for popup
+                    const total = cell.received + cell.lost;
+                    const successRate = total > 0 ? ((cell.received / total) * 100).toFixed(0) : 'N/A';
+                    const reliabilityText = total > 0 ? `${successRate}%` : 'No ping data';
+                    
                     const popupContent = `
                         <div class="popup-content">
                             <div><span class="popup-label">Samples:</span><strong>${cell.samples}</strong></div>
+                            <div><span class="popup-label">Success Rate:</span><strong>${reliabilityText}</strong></div>
                             <div><span class="popup-label">Received:</span><strong style="color: #00ff00">${cell.received}</strong> / Lost: <strong style="color: #ff0000">${cell.lost}</strong></div>
                             <div><span class="popup-label">Avg RSSI:</span>${avgRssi !== null ? avgRssi.toFixed(1) + ' dBm' : 'N/A'}</div>
                             <div><span class="popup-label">Nodes:</span>${cell.nodes.size}</div>
