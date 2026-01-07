@@ -580,9 +580,10 @@
                         weight: 1
                     });
                     
-                    // Get first 2 chars of each node ID
-                    const nodePrefixes = Array.from(cell.nodes)
-                        .map(nodeId => nodeId.substring(0, 2))
+                    // Get unique first 2 chars of each node ID
+                    const nodePrefixes = Array.from(new Set(
+                        Array.from(cell.nodes).map(nodeId => nodeId.substring(0, 2))
+                    ))
                         .sort()
                         .join(', ');
                     
