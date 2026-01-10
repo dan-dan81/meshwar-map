@@ -336,6 +336,110 @@
         body.light-theme .measure-distance {
             color: #00c853;
         }
+        
+        /* Mobile-friendly controls */
+        .menu-button {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(30, 30, 30, 0.95);
+            padding: 12px;
+            border-radius: 8px;
+            z-index: 1001;
+            cursor: pointer;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.5);
+            font-size: 24px;
+            line-height: 1;
+            transition: background 0.3s;
+        }
+        
+        .menu-button:hover {
+            background: rgba(50, 50, 50, 0.95);
+        }
+        
+        body.light-theme .menu-button {
+            background: rgba(255, 255, 255, 0.95);
+        }
+        
+        body.light-theme .menu-button:hover {
+            background: rgba(240, 240, 240, 0.95);
+        }
+        
+        .info-panel {
+            top: 70px;
+            max-height: calc(100vh - 140px);
+            overflow-y: auto;
+            transition: transform 0.3s, opacity 0.3s;
+        }
+        
+        .info-panel.hidden {
+            transform: translateX(-110%);
+            opacity: 0;
+            pointer-events: none;
+        }
+        
+        .measure-control {
+            top: 70px;
+            right: 10px;
+            transition: transform 0.3s, opacity 0.3s;
+        }
+        
+        .measure-control.hidden {
+            transform: translateX(110%);
+            opacity: 0;
+            pointer-events: none;
+        }
+        
+        .theme-toggle {
+            top: 10px;
+            right: 60px;
+        }
+        
+        .tools-button {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(30, 30, 30, 0.95);
+            padding: 12px;
+            border-radius: 8px;
+            z-index: 1001;
+            cursor: pointer;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.5);
+            font-size: 24px;
+            line-height: 1;
+            transition: background 0.3s;
+        }
+        
+        .tools-button:hover {
+            background: rgba(50, 50, 50, 0.95);
+        }
+        
+        body.light-theme .tools-button {
+            background: rgba(255, 255, 255, 0.95);
+        }
+        
+        body.light-theme .tools-button:hover {
+            background: rgba(240, 240, 240, 0.95);
+        }
+        
+        /* Mobile responsive */
+        @media (max-width: 768px) {
+            .info-panel {
+                min-width: calc(100vw - 20px);
+                left: 10px;
+                right: 10px;
+            }
+            
+            .measure-control {
+                min-width: calc(100vw - 20px);
+                left: 10px;
+                right: 10px;
+            }
+            
+            .theme-toggle {
+                display: none;
+            }
+        }
     </style>
 </head>
 <body>
@@ -343,11 +447,19 @@
     
     <div id="map"></div>
     
+    <div class="menu-button" onclick="toggleInfoPanel()" title="Toggle info panel">
+        ☰
+    </div>
+    
+    <div class="tools-button" onclick="toggleToolsPanel()" title="Toggle tools">
+        🛠️
+    </div>
+    
     <div class="theme-toggle" onclick="toggleTheme()" title="Toggle light/dark theme">
         <span class="theme-toggle-icon" id="theme-icon">☀️</span>
     </div>
     
-    <div class="measure-control">
+    <div class="measure-control hidden" id="measure-control">
         <button class="measure-btn" id="measure-btn" onclick="toggleMeasure()">📏 Measure Distance</button>
         <div class="unit-selector">
             <button class="unit-btn active" data-unit="km" onclick="setUnit('km')">km</button>
@@ -361,7 +473,7 @@
         </div>
     </div>
     
-    <div class="info-panel">
+    <div class="info-panel hidden" id="info-panel">
         <h2>📡 MeshCore Wardrive</h2>
         <div class="stat">
             <span class="stat-label">Total Samples:</span>
@@ -515,6 +627,16 @@
             updateThemeIcon();
             updateMapTiles();
             localStorage.setItem('mapTheme', isDarkTheme ? 'dark' : 'light');
+        }
+        
+        function toggleInfoPanel() {
+            const panel = document.getElementById('info-panel');
+            panel.classList.toggle('hidden');
+        }
+        
+        function toggleToolsPanel() {
+            const panel = document.getElementById('measure-control');
+            panel.classList.toggle('hidden');
         }
         
         function updateThemeIcon() {
