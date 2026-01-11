@@ -232,6 +232,12 @@
             color: #666;
         }
         
+        body.light-theme #resolution-selector {
+            background: rgba(0, 0, 0, 0.05);
+            color: #000;
+            border-color: rgba(0, 0, 0, 0.2);
+        }
+        
         /* Measure tool */
         .measure-control {
             position: absolute;
@@ -499,6 +505,17 @@
             </div>
         </div>
         
+        <div class="layer-toggles">
+            <div style="font-size: 12px; font-weight: 600; margin-bottom: 6px; color: #aaa;">Coverage Resolution</div>
+            <select id="resolution-selector" onchange="changeResolution()" style="width: 100%; padding: 6px; background: rgba(255,255,255,0.1); color: #fff; border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; font-size: 12px;">
+                <option value="4">Regional (~20km)</option>
+                <option value="5">City-level (~5km)</option>
+                <option value="6" selected>Neighborhood (~1.2km)</option>
+                <option value="7">Street-level (~153m)</option>
+                <option value="8">Building-level (~38m)</option>
+            </select>
+        </div>
+        
         <div class="legend">
             <div class="legend-title">Coverage Legend</div>
             <div class="legend-item">
@@ -683,6 +700,10 @@
         const samplesLayer = L.layerGroup();
         const measureLayer = L.layerGroup().addTo(map);
         
+        // Coverage resolution setting
+        let coveragePrecision = 6; // Default
+        let cachedSamples = null; // Cache samples for resolution changes
+        
         // Measure tool state
         let measureActive = false;
         let measurePoints = [];
@@ -834,6 +855,16 @@
             }
         }
         
+        function changeResolution() {
+            const selector = document.getElementById('resolution-selector');
+            coveragePrecision = parseInt(selector.value);
+            
+            // Re-aggregate and redraw if we have cached samples
+            if (cachedSamples) {
+                renderCoverage(cachedSamples);
+            }
+        }
+        
         // Geohash to bounds conversion
         function geohashToBounds(hash) {
             const bounds = Geohash.bounds(hash);
@@ -875,46 +906,175 @@
             return '#ff0000'; // Very poor (red)
         }
         
-        // Aggregate samples into coverage cells
+        // Calculate age in days
+        function ageInDays(timestamp) {
+            const now = new Date();
+            const sampleDate = new Date(timestamp);
+            const diffMs = now - sampleDate;
+            return Math.floor(diffMs / (1000 * 60 * 60 * 24));
+        }
+        
+        // Aggregate samples into coverage cells with smart weighting
         function aggregateCoverage(samples) {
-            const coverage = {};
+            const coverageToSamples = {};
             
+            // Group samples by coverage hash
             samples.forEach(sample => {
                 const lat = sample.latitude || sample.lat;
                 const lng = sample.longitude || sample.lng;
                 
                 if (!lat || !lng) return;
                 
-                // Encode to geohash (precision 6 ~= 1.2km x 610m)
-                const hash = Geohash.encode(lat, lng, 6);
+                // Encode to geohash with user-selected precision
+                const hash = Geohash.encode(lat, lng, coveragePrecision);
                 
-                if (!coverage[hash]) {
-                    coverage[hash] = {
-                        hash: hash,
-                        samples: 0,
-                        received: 0,  // Successful pings
-                        lost: 0,      // Failed pings
-                        nodes: new Set()
-                    };
+                if (!coverageToSamples[hash]) {
+                    coverageToSamples[hash] = [];
                 }
+                coverageToSamples[hash].push(sample);
+            });
+            
+            const coverage = {};
+            
+            // Process each coverage area with smart weighting
+            Object.entries(coverageToSamples).forEach(([hash, samplesInArea]) => {
+                // Sort by timestamp (newest first)
+                samplesInArea.sort((a, b) => {
+                    const timeA = new Date(a.timestamp).getTime();
+                    const timeB = new Date(b.timestamp).getTime();
+                    return timeB - timeA;
+                });
                 
-                coverage[hash].samples++;
+                coverage[hash] = {
+                    hash: hash,
+                    samples: samplesInArea.length,
+                    received: 0,
+                    lost: 0,
+                    nodes: new Set()
+                };
                 
-                // Track ping success/failure (like Android app)
-                // Check if sample has pingSuccess field or infer from nodeId/rssi
-                if (sample.pingSuccess === true || (sample.nodeId && sample.nodeId !== 'Unknown')) {
-                    coverage[hash].received++;
-                } else if (sample.pingSuccess === false || sample.nodeId === 'Unknown') {
-                    coverage[hash].lost++;
-                }
-                
-                // Only track actual repeater IDs (not Unknown)
-                if (sample.nodeId && sample.nodeId !== 'Unknown') {
-                    coverage[hash].nodes.add(sample.nodeId);
-                }
+                // Process samples with time-based weighting
+                samplesInArea.forEach((sample, i) => {
+                    // Determine ping success
+                    let pingSuccess = null;
+                    if (sample.pingSuccess === true || (sample.nodeId && sample.nodeId !== 'Unknown')) {
+                        pingSuccess = true;
+                    } else if (sample.pingSuccess === false || sample.nodeId === 'Unknown') {
+                        pingSuccess = false;
+                    }
+                    
+                    // Skip GPS-only samples
+                    if (pingSuccess === null) return;
+                    
+                    // Calculate age-based weight
+                    const age = ageInDays(sample.timestamp);
+                    let weight = 1.0;
+                    
+                    if (age > 30) {
+                        weight = 0.2; // Very old
+                    } else if (age > 7) {
+                        weight = 0.5; // Week-old
+                    } else if (age > 1) {
+                        weight = 0.8; // Day-old
+                    }
+                    
+                    // Check for contradictions with newer samples
+                    const newerSamples = samplesInArea.slice(0, Math.min(i, 10));
+                    let contradictions = 0;
+                    let agreements = 0;
+                    
+                    newerSamples.forEach(newer => {
+                        let newerPingSuccess = null;
+                        if (newer.pingSuccess === true || (newer.nodeId && newer.nodeId !== 'Unknown')) {
+                            newerPingSuccess = true;
+                        } else if (newer.pingSuccess === false || newer.nodeId === 'Unknown') {
+                            newerPingSuccess = false;
+                        }
+                        
+                        if (newerPingSuccess !== null) {
+                            if (newerPingSuccess !== pingSuccess) {
+                                contradictions++;
+                            } else {
+                                agreements++;
+                            }
+                        }
+                    });
+                    
+                    // Discount contradicted samples
+                    if (contradictions > agreements && contradictions >= 2) {
+                        weight *= 0.1;
+                    }
+                    
+                    // Apply weighted sample
+                    if (pingSuccess) {
+                        coverage[hash].received += weight;
+                        if (sample.nodeId && sample.nodeId !== 'Unknown') {
+                            coverage[hash].nodes.add(sample.nodeId);
+                        }
+                    } else {
+                        coverage[hash].lost += weight;
+                    }
+                });
             });
             
             return Object.values(coverage);
+        }
+        
+        // Render coverage from samples (used for both initial load and resolution changes)
+        function renderCoverage(samples) {
+            // Clear existing coverage layer
+            coverageLayer.clearLayers();
+            
+            // Aggregate coverage with current precision
+            const coverage = aggregateCoverage(samples);
+            
+            console.log('Coverage cells:', coverage.length, 'at precision', coveragePrecision);
+            
+            // Draw coverage squares
+            coverage.forEach(cell => {
+                const bounds = geohashToBounds(cell.hash);
+                
+                // Use ping success/failure logic (matching Android app)
+                const color = getCoverageColor(cell.received, cell.lost);
+                
+                const rectangle = L.rectangle(bounds, {
+                    color: color,
+                    fillColor: color,
+                    fillOpacity: 0.3,
+                    weight: 1
+                });
+                
+                // Get unique first 2 chars of each node ID
+                const uniquePrefixes = Array.from(new Set(
+                    Array.from(cell.nodes).map(nodeId => nodeId.substring(0, 2))
+                ));
+                const nodePrefixes = uniquePrefixes.sort().join(', ');
+                
+                // Calculate success rate for popup (using weighted values)
+                const total = cell.received + cell.lost;
+                const successRate = total > 0 ? ((cell.received / total) * 100).toFixed(0) : 'N/A';
+                const reliabilityText = total > 0 ? `${successRate}%` : 'No ping data';
+                
+                let popupContent = `
+                    <div class="popup-content">
+                        <div><span class="popup-label">Samples:</span><strong>${cell.samples}</strong></div>
+                        <div><span class="popup-label">Success Rate:</span><strong>${reliabilityText}</strong></div>
+                        <div><span class="popup-label">Received:</span><strong style="color: #00ff00">${cell.received.toFixed(1)}</strong> / Lost: <strong style="color: #ff0000">${cell.lost.toFixed(1)}</strong></div>`;
+                
+                // Only show repeater info if at least one ping was received
+                if (cell.received > 0) {
+                    popupContent += `
+                        <div><span class="popup-label">Repeaters Heard:</span><strong>${uniquePrefixes.length}</strong></div>
+                        <div><span class="popup-label">Repeater IDs:</span>${nodePrefixes || 'None'}</div>`;
+                }
+                
+                popupContent += `
+                    </div>
+                `;
+                
+                rectangle.bindPopup(popupContent);
+                coverageLayer.addLayer(rectangle);
+            });
         }
         
         // Fetch and display data
@@ -930,70 +1090,17 @@
                     return;
                 }
                 
-                // Clear existing layers
-                coverageLayer.clearLayers();
+                // Cache samples for resolution changes
+                cachedSamples = data.samples;
+                
+                // Render coverage with current precision
+                renderCoverage(data.samples);
+                
+                // Clear existing sample layer
                 samplesLayer.clearLayers();
                 
                 // Track unique nodes
                 const uniqueNodes = new Set();
-                
-                // Aggregate coverage
-                const coverage = aggregateCoverage(data.samples);
-                
-                // Debug: log first sample
-                if (data.samples.length > 0) {
-                    console.log('Sample example:', data.samples[0]);
-                    console.log('Coverage cells:', coverage.length);
-                    if (coverage.length > 0) {
-                        console.log('First cell:', coverage[0]);
-                    }
-                }
-                
-                // Draw coverage squares
-                coverage.forEach(cell => {
-                    const bounds = geohashToBounds(cell.hash);
-                    
-                    // Use ping success/failure logic (matching Android app)
-                    const color = getCoverageColor(cell.received, cell.lost);
-                    
-                    const rectangle = L.rectangle(bounds, {
-                        color: color,
-                        fillColor: color,
-                        fillOpacity: 0.3,
-                        weight: 1
-                    });
-                    
-                    // Get unique first 2 chars of each node ID
-                    const uniquePrefixes = Array.from(new Set(
-                        Array.from(cell.nodes).map(nodeId => nodeId.substring(0, 2))
-                    ));
-                    const nodePrefixes = uniquePrefixes.sort().join(', ');
-                    
-                    // Calculate success rate for popup
-                    const total = cell.received + cell.lost;
-                    const successRate = total > 0 ? ((cell.received / total) * 100).toFixed(0) : 'N/A';
-                    const reliabilityText = total > 0 ? `${successRate}%` : 'No ping data';
-                    
-                    let popupContent = `
-                        <div class="popup-content">
-                            <div><span class="popup-label">Samples:</span><strong>${cell.samples}</strong></div>
-                            <div><span class="popup-label">Success Rate:</span><strong>${reliabilityText}</strong></div>
-                            <div><span class="popup-label">Received:</span><strong style="color: #00ff00">${cell.received}</strong> / Lost: <strong style="color: #ff0000">${cell.lost}</strong></div>`;
-                    
-                    // Only show repeater info if at least one ping was received
-                    if (cell.received > 0) {
-                        popupContent += `
-                            <div><span class="popup-label">Repeaters Heard:</span><strong>${uniquePrefixes.length}</strong></div>
-                            <div><span class="popup-label">Repeater IDs:</span>${nodePrefixes || 'None'}</div>`;
-                    }
-                    
-                    popupContent += `
-                        </div>
-                    `;
-                    
-                    rectangle.bindPopup(popupContent);
-                    coverageLayer.addLayer(rectangle);
-                });
                 
                 // Add sample markers
                 data.samples.forEach(sample => {
