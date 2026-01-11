@@ -232,10 +232,31 @@
             color: #666;
         }
         
-        body.light-theme #resolution-selector {
+        .resolution-select {
+            width: 100%;
+            padding: 6px;
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        
+        .resolution-select option {
+            background: #2a2a2a;
+            color: #fff;
+        }
+        
+        body.light-theme .resolution-select {
             background: rgba(0, 0, 0, 0.05);
             color: #000;
             border-color: rgba(0, 0, 0, 0.2);
+        }
+        
+        body.light-theme .resolution-select option {
+            background: #ffffff;
+            color: #000;
         }
         
         /* Measure tool */
@@ -507,7 +528,7 @@
         
         <div class="layer-toggles">
             <div style="font-size: 12px; font-weight: 600; margin-bottom: 6px; color: #aaa;">Coverage Resolution</div>
-            <select id="resolution-selector" onchange="changeResolution()" style="width: 100%; padding: 6px; background: rgba(255,255,255,0.1); color: #fff; border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; font-size: 12px;">
+            <select id="resolution-selector" onchange="changeResolution()" class="resolution-select">
                 <option value="4">Regional (~20km)</option>
                 <option value="5">City-level (~5km)</option>
                 <option value="6" selected>Neighborhood (~1.2km)</option>
