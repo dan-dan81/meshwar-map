@@ -83,8 +83,26 @@ export async function onRequestPost(context) {
 }
 
 // Handle DELETE request to clear all data
+// SECURED: Requires authentication token
 export async function onRequestDelete(context) {
   try {
+    // Check for authorization header
+    const authHeader = context.request.headers.get('Authorization');
+    const adminToken = context.env.ADMIN_TOKEN; // Set this in Cloudflare Pages settings
+    
+    // Verify token
+    if (!authHeader || authHeader !== `Bearer ${adminToken}`) {
+      return new Response(JSON.stringify({ 
+        error: 'Unauthorized: Invalid or missing authentication token'
+      }), {
+        status: 401,
+        headers: { 
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        },
+      });
+    }
+    
     // Delete the samples key from KV
     await context.env.WARDRIVE_DATA.delete('samples');
     
@@ -111,7 +129,7 @@ export async function onRequestOptions() {
     headers: {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     },
   });
 }
