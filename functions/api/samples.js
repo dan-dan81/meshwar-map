@@ -58,8 +58,8 @@ export async function onRequestPost(context) {
       timestamp: sample.timestamp || new Date().toISOString(),
     }));
     
-    // Merge with existing (keep last 10,000 samples)
-    const allSamples = [...existingSamples, ...newSamples].slice(-10000);
+        // Merge with existing (keep last 100,000 samples)
+        const allSamples = [...existingSamples, ...newSamples].slice(-100000);
     
     // Store back to KV
     await context.env.WARDRIVE_DATA.put('samples', JSON.stringify(allSamples));
