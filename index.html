@@ -644,10 +644,6 @@
                 <input type="checkbox" id="toggle-coverage" checked onchange="toggleCoverage()">
                 <label for="toggle-coverage">Show Coverage</label>
             </div>
-            <div class="toggle-item">
-                <input type="checkbox" id="toggle-samples" onchange="toggleSamples()">
-                <label for="toggle-samples">Show Samples</label>
-            </div>
         </div>
         
         <div class="layer-toggles">
@@ -869,7 +865,6 @@
         
         // Layer groups
         const coverageLayer = L.layerGroup().addTo(map);
-        const samplesLayer = L.layerGroup();
         const measureLayer = L.layerGroup().addTo(map);
         
         // Coverage resolution setting
@@ -1019,22 +1014,100 @@
             }
         }
         
-        function toggleSamples() {
-            if (document.getElementById('toggle-samples').checked) {
-                map.addLayer(samplesLayer);
-            } else {
-                map.removeLayer(samplesLayer);
+        function changeResolution() {
+            const selector = document.getElementById('resolution-selector');
+            const newPrecision = parseInt(selector.value);
+            
+            // Re-aggregate and redraw if we have cached coverage
+            if (cachedSamples) {
+                renderCoverageAtPrecision(cachedSamples, newPrecision);
             }
         }
         
-        function changeResolution() {
-            const selector = document.getElementById('resolution-selector');
-            coveragePrecision = parseInt(selector.value);
+        // Re-aggregate coverage cells at different precision
+        function renderCoverageAtPrecision(storedCoverage, targetPrecision) {
+            // Clear existing coverage layer
+            coverageLayer.clearLayers();
             
-            // Re-aggregate and redraw if we have cached samples
-            if (cachedSamples) {
-                renderCoverage(cachedSamples);
-            }
+            // Group cells by target precision geohash
+            const aggregated = {};
+            
+            Object.entries(storedCoverage).forEach(([hash, cell]) => {
+                // Get center point of original hash
+                const bounds = Geohash.bounds(hash);
+                const centerLat = (bounds.sw.lat + bounds.ne.lat) / 2;
+                const centerLon = (bounds.sw.lon + bounds.ne.lon) / 2;
+                
+                // Re-encode at target precision
+                const newHash = Geohash.encode(centerLat, centerLon, targetPrecision);
+                
+                if (!aggregated[newHash]) {
+                    aggregated[newHash] = {
+                        received: 0,
+                        lost: 0,
+                        samples: 0,
+                        nodes: new Set(),
+                        lastUpdate: cell.lastUpdate
+                    };
+                }
+                
+                // Merge data
+                aggregated[newHash].received += cell.received || 0;
+                aggregated[newHash].lost += cell.lost || 0;
+                aggregated[newHash].samples += cell.samples || 0;
+                
+                // Merge nodes
+                if (cell.nodes && Array.isArray(cell.nodes)) {
+                    cell.nodes.forEach(node => aggregated[newHash].nodes.add(node));
+                }
+                
+                // Keep most recent timestamp
+                if (cell.lastUpdate > aggregated[newHash].lastUpdate) {
+                    aggregated[newHash].lastUpdate = cell.lastUpdate;
+                }
+            });
+            
+            // Convert nodes Sets to arrays and render
+            Object.entries(aggregated).forEach(([hash, cell]) => {
+                const bounds = geohashToBounds(hash);
+                const daysOld = ageInDays(cell.lastUpdate);
+                const freshness = getFreshnessStatus(daysOld);
+                const color = getCoverageColor(cell.received, cell.lost);
+                
+                const rectangle = L.rectangle(bounds, {
+                    color: color,
+                    fillColor: color,
+                    weight: 2,
+                    opacity: freshness.opacity,
+                    fillOpacity: freshness.opacity * 0.3,
+                    dashArray: freshness.dashArray
+                });
+                
+                const successRate = cell.received + cell.lost > 0 
+                    ? ((cell.received / (cell.received + cell.lost)) * 100).toFixed(1)
+                    : 0;
+                
+                const nodesArray = Array.from(cell.nodes);
+                
+                const popupContent = `
+                    <div class="popup-content">
+                        <div style="color: ${freshness.color}; font-weight: bold; margin-bottom: 8px;">
+                            ${freshness.label}
+                        </div>
+                        <div><span class="popup-label">Success Rate:</span> ${successRate}%</div>
+                        <div><span class="popup-label">Received:</span> ${Math.round(cell.received)}</div>
+                        <div><span class="popup-label">Lost:</span> ${Math.round(cell.lost)}</div>
+                        <div><span class="popup-label">Samples:</span> ${cell.samples}</div>
+                        <div><span class="popup-label">Repeaters:</span> ${nodesArray.length > 0 ? nodesArray.join(', ') : 'None'}</div>
+                        <div><span class="popup-label">Last Update:</span> ${new Date(cell.lastUpdate).toLocaleDateString()}</div>
+                    </div>
+                `;
+                
+                rectangle.bindPopup(popupContent);
+                coverageLayer.addLayer(rectangle);
+            });
+            
+            console.log('Re-aggregated to', Object.keys(aggregated).length, 'cells at precision', targetPrecision);
         }
         
         // Geohash to bounds conversion
