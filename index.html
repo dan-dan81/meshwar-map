@@ -1059,8 +1059,10 @@
                 // Merge repeaters data (keep most recent for each)
                 if (cell.repeaters && typeof cell.repeaters === 'object') {
                     Object.entries(cell.repeaters).forEach(([nodeId, repeaterData]) => {
-                        const existingTime = aggregated[newHash].repeaters[nodeId]?.lastSeen || 0;
-                        if (repeaterData.lastSeen > existingTime) {
+                        const existingTime = aggregated[newHash].repeaters[nodeId]?.lastSeen || '';
+                        const newTime = repeaterData.lastSeen || '';
+                        // If no existing data or new data is more recent, update
+                        if (!existingTime || newTime > existingTime) {
                             aggregated[newHash].repeaters[nodeId] = repeaterData;
                         }
                     });
