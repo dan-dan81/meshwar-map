@@ -1046,7 +1046,7 @@
                         received: 0,
                         lost: 0,
                         samples: 0,
-                        nodes: new Set(),
+                        repeaters: {},
                         lastUpdate: cell.lastUpdate
                     };
                 }
@@ -1056,9 +1056,14 @@
                 aggregated[newHash].lost += cell.lost || 0;
                 aggregated[newHash].samples += cell.samples || 0;
                 
-                // Merge nodes
-                if (cell.nodes && Array.isArray(cell.nodes)) {
-                    cell.nodes.forEach(node => aggregated[newHash].nodes.add(node));
+                // Merge repeaters data (keep most recent for each)
+                if (cell.repeaters && typeof cell.repeaters === 'object') {
+                    Object.entries(cell.repeaters).forEach(([nodeId, repeaterData]) => {
+                        const existingTime = aggregated[newHash].repeaters[nodeId]?.lastSeen || 0;
+                        if (repeaterData.lastSeen > existingTime) {
+                            aggregated[newHash].repeaters[nodeId] = repeaterData;
+                        }
+                    });
                 }
                 
                 // Keep most recent timestamp
@@ -1087,7 +1092,16 @@
                     ? ((cell.received / (cell.received + cell.lost)) * 100).toFixed(1)
                     : 0;
                 
-                const nodesArray = Array.from(cell.nodes);
+                // Build repeaters display
+                let repeatersHtml = 'None';
+                if (cell.repeaters && typeof cell.repeaters === 'object') {
+                    const repeaterList = Object.values(cell.repeaters).map(rep => {
+                        return `<span class="repeater-link" onclick="showRepeaterInfo('${rep.name}', ${rep.rssi}, ${rep.snr}, '${rep.lastSeen}')" title="Click for details">${rep.name}</span>`;
+                    });
+                    if (repeaterList.length > 0) {
+                        repeatersHtml = repeaterList.join(', ');
+                    }
+                }
                 
                 const popupContent = `
                     <div class="popup-content">
@@ -1098,7 +1112,8 @@
                         <div><span class="popup-label">Received:</span> ${Math.round(cell.received)}</div>
                         <div><span class="popup-label">Lost:</span> ${Math.round(cell.lost)}</div>
                         <div><span class="popup-label">Samples:</span> ${cell.samples}</div>
-                        <div><span class="popup-label">Repeaters:</span> ${nodesArray.length > 0 ? nodesArray.join(', ') : 'None'}</div>
+                        <div><span class="popup-label">Repeaters:</span> ${repeatersHtml}</div>
+                        <div style="font-size: 10px; color: #888; margin-top: 4px;">Click repeater name for signal details</div>
                         <div><span class="popup-label">Last Update:</span> ${new Date(cell.lastUpdate).toLocaleDateString()}</div>
                     </div>
                 `;
@@ -1379,8 +1394,13 @@
                     // Get color based on success rate
                     const color = getCoverageColor(cell.received, cell.lost);
                     
-                    // Add nodes to unique set
-                    if (cell.nodes && Array.isArray(cell.nodes)) {
+                    // Add nodes to unique set from repeaters object
+                    if (cell.repeaters && typeof cell.repeaters === 'object') {
+                        Object.keys(cell.repeaters).forEach(nodeId => {
+                            uniqueNodes.add(nodeId.substring(0, 2));
+                        });
+                    } else if (cell.nodes && Array.isArray(cell.nodes)) {
+                        // Backward compatibility with old format
                         cell.nodes.forEach(node => uniqueNodes.add(node));
                     }
                     
@@ -1399,6 +1419,19 @@
                         ? ((cell.received / (cell.received + cell.lost)) * 100).toFixed(1)
                         : 0;
                     
+                    // Build repeaters display with clickable names
+                    let repeatersHtml = 'None';
+                    if (cell.repeaters && typeof cell.repeaters === 'object') {
+                        const repeaterList = Object.values(cell.repeaters).map(rep => {
+                            const rssiText = rep.rssi !== null ? `${rep.rssi} dBm` : 'N/A';
+                            const snrText = rep.snr !== null ? `${rep.snr} dB` : 'N/A';
+                            return `<span class="repeater-link" onclick="showRepeaterInfo('${rep.name}', ${rep.rssi}, ${rep.snr}, '${rep.lastSeen}')" title="Click for details">${rep.name}</span>`;
+                        });
+                        if (repeaterList.length > 0) {
+                            repeatersHtml = repeaterList.join(', ');
+                        }
+                    }
+                    
                     const popupContent = `
                         <div class="popup-content">
                             <div style="color: ${freshness.color}; font-weight: bold; margin-bottom: 8px;">
@@ -1408,7 +1441,8 @@
                             <div><span class="popup-label">Received:</span> ${Math.round(cell.received)}</div>
                             <div><span class="popup-label">Lost:</span> ${Math.round(cell.lost)}</div>
                             <div><span class="popup-label">Samples:</span> ${cell.samples}</div>
-                            <div><span class="popup-label">Repeaters:</span> ${cell.nodes && cell.nodes.length > 0 ? cell.nodes.join(', ') : 'None'}</div>
+                            <div><span class="popup-label">Repeaters:</span> ${repeatersHtml}</div>
+                            <div style="font-size: 10px; color: #888; margin-top: 4px;">Click repeater name for signal details</div>
                             <div><span class="popup-label">Last Update:</span> ${new Date(cell.lastUpdate).toLocaleDateString()}</div>
                         </div>
                     `;
@@ -1434,6 +1468,50 @@
             if (!event || event.target.id === 'signal-modal') {
                 document.getElementById('signal-modal').classList.remove('show');
             }
+        }
+        
+        // Show repeater info modal
+        function showRepeaterInfo(name, rssi, snr, lastSeen) {
+            const modalTitle = document.getElementById('modal-title');
+            const modalBody = document.getElementById('modal-body');
+            
+            modalTitle.textContent = `Repeater: ${name}`;
+            
+            const rssiText = rssi !== null && rssi !== 'null' ? `${rssi} dBm` : 'N/A';
+            const snrText = snr !== null && snr !== 'null' ? `${snr} dB` : 'N/A';
+            const lastSeenDate = new Date(lastSeen).toLocaleString();
+            
+            const bodyContent = `
+                <div style="padding: 15px;">
+                    <div style="margin-bottom: 12px;">
+                        <div style="font-weight: 600; margin-bottom: 8px; font-size: 14px;">Last Signal Reading</div>
+                    </div>
+                    <div style="background: rgba(0, 230, 118, 0.15); padding: 12px; border-radius: 4px; margin-bottom: 12px;">
+                        <div style="margin: 8px 0;">
+                            <span style="color: #aaa;">Repeater Name:</span>
+                            <strong style="font-size: 15px; color: #00e676; margin-left: 8px;">${name}</strong>
+                        </div>
+                        <div style="margin: 8px 0;">
+                            <span style="color: #aaa;">RSSI:</span>
+                            <strong style="font-size: 15px; color: #00e676; margin-left: 8px;">${rssiText}</strong>
+                        </div>
+                        <div style="margin: 8px 0;">
+                            <span style="color: #aaa;">SNR:</span>
+                            <strong style="font-size: 15px; color: #00e676; margin-left: 8px;">${snrText}</strong>
+                        </div>
+                        <div style="margin: 8px 0;">
+                            <span style="color: #aaa;">Last Heard:</span>
+                            <strong style="font-size: 13px; color: #fff; margin-left: 8px;">${lastSeenDate}</strong>
+                        </div>
+                    </div>
+                    <div style="font-size: 11px; color: #888; text-align: center;">
+                        This is the most recent reading from this repeater in this coverage area.
+                    </div>
+                </div>
+            `;
+            
+            modalBody.innerHTML = bodyContent;
+            document.getElementById('signal-modal').classList.add('show');
         }
         
         function showRepeaterSignals(repeaterPrefix, geohash) {

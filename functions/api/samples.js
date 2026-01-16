@@ -123,7 +123,7 @@ function aggregateSamples(samples) {
         received: 0,
         lost: 0,
         samples: 0,
-        nodes: [],
+        repeaters: {},  // Changed from nodes array to repeaters object
         firstSeen: sample.timestamp || now,
         lastUpdate: sample.timestamp || now
       };
@@ -137,10 +137,21 @@ function aggregateSamples(samples) {
     // Add weighted sample
     if (success) {
       coverage[hash].received += 1;
+      
+      // Store repeater details
       if (sample.nodeId && sample.nodeId !== 'Unknown') {
-        const nodePrefix = sample.nodeId.substring(0, 2);
-        if (!coverage[hash].nodes.includes(nodePrefix)) {
-          coverage[hash].nodes.push(nodePrefix);
+        const nodeId = sample.nodeId;
+        const sampleTime = new Date(sample.timestamp || now).getTime();
+        
+        // Update if this is a newer sample for this repeater
+        if (!coverage[hash].repeaters[nodeId] || 
+            new Date(coverage[hash].repeaters[nodeId].lastSeen).getTime() < sampleTime) {
+          coverage[hash].repeaters[nodeId] = {
+            name: nodeId,
+            rssi: sample.rssi || null,
+            snr: sample.snr || null,
+            lastSeen: sample.timestamp || now
+          };
         }
       }
     } else if (failed) {
@@ -191,10 +202,15 @@ export async function onRequestPost(context) {
         existingCoverage[hash].lost += newCell.lost;
         existingCoverage[hash].samples += newCell.samples;
         
-        // Merge node lists
-        newCell.nodes.forEach(node => {
-          if (!existingCoverage[hash].nodes.includes(node)) {
-            existingCoverage[hash].nodes.push(node);
+        // Merge repeater data (keep most recent info for each repeater)
+        if (!existingCoverage[hash].repeaters) {
+          existingCoverage[hash].repeaters = {};
+        }
+        Object.entries(newCell.repeaters || {}).forEach(([nodeId, repeaterData]) => {
+          const existingTime = existingCoverage[hash].repeaters[nodeId]?.lastSeen || 0;
+          const newTime = repeaterData.lastSeen;
+          if (newTime > existingTime) {
+            existingCoverage[hash].repeaters[nodeId] = repeaterData;
           }
         });
         
