@@ -147,7 +147,7 @@ function aggregateSamples(samples) {
         if (!coverage[hash].repeaters[nodeId] || 
             new Date(coverage[hash].repeaters[nodeId].lastSeen).getTime() < sampleTime) {
           coverage[hash].repeaters[nodeId] = {
-            name: nodeId,
+            name: sample.repeaterName || nodeId,  // Use friendly name if available
             rssi: sample.rssi || null,
             snr: sample.snr || null,
             lastSeen: sample.timestamp || now
