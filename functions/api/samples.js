@@ -1,6 +1,7 @@
 // Cloudflare Pages Function for handling wardrive samples
 // Automatically deployed as /api/samples
 // Uses geohash-based aggregated storage with time decay
+// Implements server-side de-duplication using per-sample IDs stored in KV with TTL
 
 // Simple geohash encoder (precision 7 = ~153m squares)
 function encodeGeohash(lat, lon, precision = 7) {
@@ -169,6 +170,21 @@ function aggregateSamples(samples) {
   return coverage;
 }
 
+function computeSampleId(sample) {
+  if (sample.id) return String(sample.id);
+  const lat = sample.latitude ?? sample.lat;
+  const lng = sample.longitude ?? sample.lng;
+  const ts = sample.timestamp || '';
+  const node = sample.nodeId || '';
+  const key = `${lat?.toFixed?.(6)}|${lng?.toFixed?.(6)}|${ts}|${node}`;
+  let h = 0;
+  for (let i = 0; i < key.length; i++) {
+    h = ((h << 5) - h) + key.charCodeAt(i);
+    h |= 0;
+  }
+  return `h${Math.abs(h)}`;
+}
+
 export async function onRequestPost(context) {
   try {
     const body = await context.request.json();
@@ -185,35 +201,39 @@ export async function onRequestPost(context) {
     const existingCoverageJson = await context.env.WARDRIVE_DATA.get('coverage');
     let existingCoverage = existingCoverageJson ? JSON.parse(existingCoverageJson) : {};
     
+    // De-duplicate samples (in-batch and against KV)
+    const incoming = Array.isArray(body.samples) ? body.samples : [];
+    const batchUnique = [];
+    const batchIds = new Set();
+    for (const s of incoming) {
+      const sid = computeSampleId(s);
+      if (batchIds.has(sid)) continue; // drop duplicates within the same upload
+      batchIds.add(sid);
+      batchUnique.push({ ...s, __id: sid });
+    }
+    // Filter out samples already seen (stored in KV)
+    const seenResults = await Promise.all(batchUnique.map(s => context.env.WARDRIVE_DATA.get(`seen:${s.__id}`)));
+    const deduped = batchUnique.filter((s, idx) => !seenResults[idx]);
+
     // Aggregate new samples by geohash
-    const newCoverage = aggregateSamples(body.samples);
+    const newCoverage = aggregateSamples(deduped);
     
     // Merge with decay
+    Object.keys(existingCoverage).forEach(hash => {
+      applyDecay(existingCoverage[hash]);
+    });
+    
+    // Now overwrite cells with new data
     let cellsUpdated = 0;
     let cellsCreated = 0;
     
     Object.entries(newCoverage).forEach(([hash, newCell]) => {
       if (existingCoverage[hash]) {
-        // Apply decay to existing data
-        applyDecay(existingCoverage[hash]);
-        
-        // Merge new data at full weight
-        existingCoverage[hash].received += newCell.received;
-        existingCoverage[hash].lost += newCell.lost;
-        existingCoverage[hash].samples += newCell.samples;
-        
-        // Merge repeater data (keep most recent info for each repeater)
-        if (!existingCoverage[hash].repeaters) {
-          existingCoverage[hash].repeaters = {};
-        }
-        Object.entries(newCell.repeaters || {}).forEach(([nodeId, repeaterData]) => {
-          const existingTime = existingCoverage[hash].repeaters[nodeId]?.lastSeen || 0;
-          const newTime = repeaterData.lastSeen;
-          if (newTime > existingTime) {
-            existingCoverage[hash].repeaters[nodeId] = repeaterData;
-          }
-        });
-        
+        // OVERWRITE old data with new data (don't accumulate)
+        existingCoverage[hash].received = newCell.received;
+        existingCoverage[hash].lost = newCell.lost;
+        existingCoverage[hash].samples = newCell.samples;
+        existingCoverage[hash].repeaters = newCell.repeaters;
         existingCoverage[hash].lastUpdate = newCell.lastUpdate;
         cellsUpdated++;
       } else {
@@ -225,10 +245,16 @@ export async function onRequestPost(context) {
     
     // Store updated coverage
     await context.env.WARDRIVE_DATA.put('coverage', JSON.stringify(existingCoverage));
+
+    // Mark processed samples as seen with TTL (90 days)
+    const ttlSeconds = 60 * 60 * 24 * 90;
+    await Promise.all(deduped.map(s => context.env.WARDRIVE_DATA.put(`seen:${s.__id}`, '1', { expirationTtl: ttlSeconds })));
     
     return new Response(JSON.stringify({ 
       success: true, 
-      samplesReceived: body.samples.length,
+      samplesReceived: incoming.length,
+      samplesDeduped: incoming.length - deduped.length,
+      samplesProcessed: deduped.length,
       cellsUpdated: cellsUpdated,
       cellsCreated: cellsCreated,
       totalCells: Object.keys(existingCoverage).length
