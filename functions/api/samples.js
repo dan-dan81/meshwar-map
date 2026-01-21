@@ -70,36 +70,49 @@ export async function onRequestPost(context) {
     // 2. Atomic Merge into KV
     const updatePromises = Object.entries(batchSummary).map(async ([hash, newData]) => {
       const key = `cell:${hash}`;
-      const existing = await context.env.WARDRIVE_DATA.get(key, { type: "json" }) || 
-                       { received: 0, lost: 0, repeaters: {}, seenIds: [] };
-
-      // Filter for truly new IDs
+      
+      // 1. Get existing or default to empty structure
+      let existing = await context.env.WARDRIVE_DATA.get(key, { type: "json" });
+      
+      // 2. STRICTURE INITIALIZATION (The "Null-Safe" fix)
+      if (!existing) {
+        existing = { received: 0, lost: 0, repeaters: {}, seenIds: [] };
+      }
+      if (!Array.isArray(existing.seenIds)) {
+        existing.seenIds = [];
+      }
+      if (!existing.repeaters) {
+        existing.repeaters = {};
+      }
+    
+      // 3. Now .includes() is 100% safe
       const actuallyNewIds = [...newData.ids].filter(id => !existing.seenIds.includes(id));
+      
       if (actuallyNewIds.length === 0) return;
 
-      const ratio = actuallyNewIds.length / newData.ids.size;
-      existing.received += Math.round(newData.received * ratio);
-      existing.lost += Math.round(newData.lost * ratio);
-      
-      // Update repeaters & timestamp
-      existing.repeaters = { ...existing.repeaters, ...newData.repeaters };
-      if (newData.lastUpdate > (existing.lastUpdate || "")) existing.lastUpdate = newData.lastUpdate;
+          const ratio = actuallyNewIds.length / newData.ids.size;
+          existing.received += Math.round(newData.received * ratio);
+          existing.lost += Math.round(newData.lost * ratio);
+          
+          // Update repeaters & timestamp
+          existing.repeaters = { ...existing.repeaters, ...newData.repeaters };
+          if (newData.lastUpdate > (existing.lastUpdate || "")) existing.lastUpdate = newData.lastUpdate;
 
-      // Keep seen list manageable (last 150 IDs)
-      existing.seenIds = [...actuallyNewIds, ...existing.seenIds].slice(0, 150);
+          // Keep seen list manageable (last 150 IDs)
+          existing.seenIds = [...actuallyNewIds, ...existing.seenIds].slice(0, 150);
 
-      return context.env.WARDRIVE_DATA.put(key, JSON.stringify(existing));
-    });
+          return context.env.WARDRIVE_DATA.put(key, JSON.stringify(existing));
+        });
 
-    await Promise.all(updatePromises);
-    return new Response(JSON.stringify({ success: true, count: incoming.length }), {
-      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
-    });
-  } catch (err) {
-    console.error("POST Error:", err.message);
-    return new Response(JSON.stringify({ error: err.message }), { status: 500 });
-  }
-}
+        await Promise.all(updatePromises);
+        return new Response(JSON.stringify({ success: true, count: incoming.length }), {
+          headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
+        });
+      } catch (err) {
+        console.error("POST Error:", err.message);
+        return new Response(JSON.stringify({ error: err.message }), { status: 500 });
+      }
+    }
 
 export async function onRequestGet(context) {
   try {
