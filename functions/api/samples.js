@@ -194,25 +194,31 @@ function computeSampleId(sample) {
 
 // Trust "Coverage" object for dedup, or handle in a single key
 
-//test
+//test - avoiding .json()
 export async function onRequestPost(context) {
-  // Why break, check for immediate response
-  // If this works, the problem is the JSON parsing or the encode geohash loop.
-  // return new Response(JSON.stringify({ msg: "Reached Worker" }), { status: 200 });
+  const url = new URL(context.request.url);
+  const contentLength = context.request.headers.get("content-length");
+  
+  // This log MUST appear if the worker starts
+  console.log(`>>> Incoming POST to ${url.pathname} | Size: ${contentLength} bytes`);
 
   try {
-    const body = await context.request.json();
-    const count = body.samples ? body.samples.length : 0;
-    
-    // TEST 2: See if we can parse the JSON without crashing
+    // Read as text first (avoids the heavy CPU/Memory cost of JSON parsing)
+    const rawBody = await context.request.text();
+    console.log(`>>> Successfully read ${rawBody.length} bytes of raw text`);
+
+    // Now try to parse only if it's not too huge
+    const data = JSON.parse(rawBody);
+    console.log(`>>> JSON parsed. Found ${data.samples?.length || 0} samples.`);
+
     return new Response(JSON.stringify({ 
       success: true, 
-      message: "JSON parsed successfully",
-      receivedCount: count 
+      bytesRead: rawBody.length 
     }), { status: 200 });
 
   } catch (err) {
-    return new Response(JSON.stringify({ error: "JSON Parse Failed", detail: err.message }), { status: 400 });
+    console.error(">>> CRASH during read/parse:", err.message);
+    return new Response(JSON.stringify({ error: err.message }), { status: 500 });
   }
 }
 //test end
