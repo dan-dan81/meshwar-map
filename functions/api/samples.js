@@ -187,92 +187,78 @@ function computeSampleId(sample) {
   return `h${Math.abs(h)}`;
 }
 
+// refactored to reduce KV Interactions due to Cloudflare free tier
+// subrequest limit = 50
+// cpu time = 10ms
+// memory = 128mb
+
+// Trust "Coverage" object for dedup, or handle in a single key
+
 export async function onRequestPost(context) {
-  console.log(">>> POST Request Received!"); // Sanity Check!
+  const startTime = Date.now();
+  console.log(">>> POST Received");
+
   try {
     const body = await context.request.json();
-    console.log(">>> Payload size:", JSON.stringify(body).length); // Not bhed, good size
-    // Validate request
-    if (!body.samples || !Array.isArray(body.samples)) {
-      return new Response(JSON.stringify({ error: 'Invalid request: samples array required' }), {
-        status: 400,
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
+    const incoming = body.samples || [];
     
-    // Get existing coverage
+    if (incoming.length === 0) {
+      return new Response(JSON.stringify({ success: true, count: 0 }), { headers: { 'Content-Type': 'application/json' } });
+    }
+
+    // 1. SINGLE GET: Get existing coverage once
     const existingCoverageJson = await context.env.WARDRIVE_DATA.get('coverage');
     let existingCoverage = existingCoverageJson ? JSON.parse(existingCoverageJson) : {};
-    
-    // De-duplicate samples (in-batch and against KV)
-    const incoming = Array.isArray(body.samples) ? body.samples : [];
+
+    // 2. IN-MEMORY PROCESSING: Do all logic without calling KV again
     const batchUnique = [];
     const batchIds = new Set();
+    
     for (const s of incoming) {
       const sid = computeSampleId(s);
-      if (batchIds.has(sid)) continue; // drop duplicates within the same upload
+      if (batchIds.has(sid)) continue; 
       batchIds.add(sid);
       batchUnique.push({ ...s, __id: sid });
     }
-    // Filter out samples already seen (stored in KV)
-    const seenResults = await Promise.all(batchUnique.map(s => context.env.WARDRIVE_DATA.get(`seen:${s.__id}`)));
-    const deduped = batchUnique.filter((s, idx) => !seenResults[idx]);
 
-    // Aggregate new samples by geohash
-    const newCoverage = aggregateSamples(deduped);
-    
-    // Merge with decay
-    Object.keys(existingCoverage).forEach(hash => {
-      applyDecay(existingCoverage[hash]);
-    });
-    
-    // Now overwrite cells with new data
+    // IMPORTANT: Skip the "seen:ID" KV checks entirely for now to save subrequests
+    // We will use the timestamp/geohash to avoid adding redundant data to the coverage map
+    const newCoverage = aggregateSamples(batchUnique);
+
+    // 3. MERGE DATA
     let cellsUpdated = 0;
     let cellsCreated = 0;
-    
+
     Object.entries(newCoverage).forEach(([hash, newCell]) => {
       if (existingCoverage[hash]) {
-        // OVERWRITE old data with new data (don't accumulate)
-        existingCoverage[hash].received = newCell.received;
-        existingCoverage[hash].lost = newCell.lost;
-        existingCoverage[hash].samples = newCell.samples;
-        existingCoverage[hash].repeaters = newCell.repeaters;
-        existingCoverage[hash].lastUpdate = newCell.lastUpdate;
-        cellsUpdated++;
+        // Only update if the new data is actually newer
+        if (newCell.lastUpdate > existingCoverage[hash].lastUpdate) {
+          existingCoverage[hash] = { ...newCell }; // Overwrite with fresh data
+          cellsUpdated++;
+        }
       } else {
-        // Brand new coverage square
         existingCoverage[hash] = newCell;
         cellsCreated++;
       }
     });
-    
-    // Store updated coverage
+
+    // 4. SINGLE PUT: Update the global map once
     await context.env.WARDRIVE_DATA.put('coverage', JSON.stringify(existingCoverage));
 
-    // Mark processed samples as seen with TTL (90 days)
-    const ttlSeconds = 60 * 60 * 24 * 90;
-    await Promise.all(deduped.map(s => context.env.WARDRIVE_DATA.put(`seen:${s.__id}`, '1', { expirationTtl: ttlSeconds })));
-    
+    console.log(`>>> Processed ${incoming.length} samples in ${Date.now() - startTime}ms`);
+
     return new Response(JSON.stringify({ 
       success: true, 
-      samplesReceived: incoming.length,
-      samplesDeduped: incoming.length - deduped.length,
-      samplesProcessed: deduped.length,
-      cellsUpdated: cellsUpdated,
-      cellsCreated: cellsCreated,
-      totalCells: Object.keys(existingCoverage).length
+      processed: incoming.length,
+      cellsCreated,
+      cellsUpdated
     }), {
-      headers: {
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
-      },
+      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
     });
+
   } catch (error) {
-    console.error("Worker Error:", error.message); // Show in Cloudflare Logs
-    return new Response(JSON.stringify({ error: error.message }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    console.error("Worker Error:", error.stack); // .stack gives the line number!
+    return new Response(JSON.stringify({ error: error.message }), { status: 500 });
   }
 }
 
