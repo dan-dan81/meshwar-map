@@ -68,6 +68,7 @@ export async function onRequestGet(context) {
       },
     });
   } catch (error) {
+    console.error("Worker Error:", error.message); // Show in Cloudflare Logs
     return new Response(JSON.stringify({ error: error.message }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
@@ -265,6 +266,7 @@ export async function onRequestPost(context) {
       },
     });
   } catch (error) {
+    console.error("Worker Error:", error.message); // Show in Cloudflare Logs
     return new Response(JSON.stringify({ error: error.message }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
@@ -306,6 +308,7 @@ export async function onRequestDelete(context) {
       },
     });
   } catch (error) {
+    console.error("Worker Error:", error.message); // Show in Cloudflare Logs
     return new Response(JSON.stringify({ error: error.message }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
