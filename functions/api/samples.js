@@ -184,62 +184,32 @@ function computeSampleId(sample) {
 // cpu time = 10ms
 // memory = 128mb
 
-// Trust "Coverage" object for dedup, or handle in a single key
 
 export async function onRequestPost(context) {
-  console.log(">>> POST Received - Atomic Update Mode");
+  // 1. Log immediately to prove the script started
+  console.log("LOG: Script started");
+
   try {
-    const body = await context.request.json();
-    const samples = body.samples || [];
-    if (samples.length === 0) return new Response(JSON.stringify({ success: true }), { status: 200 });
+    // 2. Log headers to check Content-Type
+    const contentType = context.request.headers.get("content-type");
+    console.log("LOG: Content-Type is", contentType);
 
-    // 1. Group samples by geohash in memory first
-    const batchSummary = {}; 
-    for (const s of samples) {
-      const lat = s.latitude || s.lat;
-      const lng = s.longitude || s.lng;
-      if (!lat || !lng) continue;
+    // 3. Try to get raw text instead of .json() (safer)
+    const rawText = await context.request.text();
+    console.log("LOG: Raw text length", rawText.length);
 
-      const hash = encodeGeohash(lat, lng, 7);
-      if (!batchSummary[hash]) {
-        batchSummary[hash] = { received: 0, lost: 0, lastUpdate: s.timestamp, repeaters: {} };
-      }
+    if (!rawText) throw new Error("Empty request body");
 
-      const success = s.pingSuccess === true || (s.nodeId && s.nodeId !== 'Unknown');
-      success ? batchSummary[hash].received++ : batchSummary[hash].lost++;
-      
-      if (s.nodeId && s.nodeId !== 'Unknown') {
-        batchSummary[hash].repeaters[s.nodeId] = {
-          name: s.repeaterName || s.nodeId,
-          rssi: s.rssi || null,
-          lastSeen: s.timestamp
-        };
-      }
-    }
+    const body = JSON.parse(rawText);
+    console.log("LOG: JSON parsed. Samples:", body.samples?.length);
 
-    // 2. Write to KV using Atomic Keys
-    // This uses one subrequest per UNIQUE geohash found in this batch
-    const updatePromises = Object.entries(batchSummary).map(async ([hash, newData]) => {
-      const key = `cell:${hash}`;
-      const existing = await context.env.WARDRIVE_DATA.get(key, { type: "json" }) || { received: 0, lost: 0, repeaters: {} };
-      
-      // Merge logic
-      existing.received += newData.received;
-      existing.lost += newData.lost;
-      existing.lastUpdate = newData.lastUpdate;
-      existing.repeaters = { ...existing.repeaters, ...newData.repeaters };
+    // ... (Your processing logic here)
 
-      return context.env.WARDRIVE_DATA.put(key, JSON.stringify(existing));
-    });
-
-    await Promise.all(updatePromises);
-
-    return new Response(JSON.stringify({ success: true, processed: samples.length }), {
-      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
-    });
+    return new Response(JSON.stringify({ success: true }), { status: 200 });
 
   } catch (error) {
-    console.error("Worker Error:", error.message);
+    // This will catch logic errors, but not Syntax errors
+    console.error("LOG: Caught Error:", error.message);
     return new Response(JSON.stringify({ error: error.message }), { status: 500 });
   }
 }
