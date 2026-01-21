@@ -46,10 +46,11 @@ function encodeGeohash(lat, lon, precision = 7) {
 }
 
 export async function onRequestGet(context) {
+
   try {
     // Get aggregated coverage from KV storage
     const coverageJson = await context.env.WARDRIVE_DATA.get('coverage');
-    
+    console.log(">>> GET Request Received!"); // Sanity check!
     if (!coverageJson) {
       return new Response(JSON.stringify({ coverage: {} }), {
         headers: {
@@ -187,9 +188,10 @@ function computeSampleId(sample) {
 }
 
 export async function onRequestPost(context) {
+  console.log(">>> POST Request Received!"); // Sanity Check!
   try {
     const body = await context.request.json();
-    
+    console.log(">>> Payload size:", JSON.stringify(body).length); // Not bhed, good size
     // Validate request
     if (!body.samples || !Array.isArray(body.samples)) {
       return new Response(JSON.stringify({ error: 'Invalid request: samples array required' }), {
