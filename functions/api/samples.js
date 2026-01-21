@@ -194,73 +194,28 @@ function computeSampleId(sample) {
 
 // Trust "Coverage" object for dedup, or handle in a single key
 
+//test
 export async function onRequestPost(context) {
-  const startTime = Date.now();
-  console.log(">>> POST Received");
+  // Why break, check for immediate response
+  // If this works, the problem is the JSON parsing or the encode geohash loop.
+  // return new Response(JSON.stringify({ msg: "Reached Worker" }), { status: 200 });
 
   try {
     const body = await context.request.json();
-    const incoming = body.samples || [];
+    const count = body.samples ? body.samples.length : 0;
     
-    if (incoming.length === 0) {
-      return new Response(JSON.stringify({ success: true, count: 0 }), { headers: { 'Content-Type': 'application/json' } });
-    }
-
-    // 1. SINGLE GET: Get existing coverage once
-    const existingCoverageJson = await context.env.WARDRIVE_DATA.get('coverage');
-    let existingCoverage = existingCoverageJson ? JSON.parse(existingCoverageJson) : {};
-
-    // 2. IN-MEMORY PROCESSING: Do all logic without calling KV again
-    const batchUnique = [];
-    const batchIds = new Set();
-    
-    for (const s of incoming) {
-      const sid = computeSampleId(s);
-      if (batchIds.has(sid)) continue; 
-      batchIds.add(sid);
-      batchUnique.push({ ...s, __id: sid });
-    }
-
-    // IMPORTANT: Skip the "seen:ID" KV checks entirely for now to save subrequests
-    // We will use the timestamp/geohash to avoid adding redundant data to the coverage map
-    const newCoverage = aggregateSamples(batchUnique);
-
-    // 3. MERGE DATA
-    let cellsUpdated = 0;
-    let cellsCreated = 0;
-
-    Object.entries(newCoverage).forEach(([hash, newCell]) => {
-      if (existingCoverage[hash]) {
-        // Only update if the new data is actually newer
-        if (newCell.lastUpdate > existingCoverage[hash].lastUpdate) {
-          existingCoverage[hash] = { ...newCell }; // Overwrite with fresh data
-          cellsUpdated++;
-        }
-      } else {
-        existingCoverage[hash] = newCell;
-        cellsCreated++;
-      }
-    });
-
-    // 4. SINGLE PUT: Update the global map once
-    await context.env.WARDRIVE_DATA.put('coverage', JSON.stringify(existingCoverage));
-
-    console.log(`>>> Processed ${incoming.length} samples in ${Date.now() - startTime}ms`);
-
+    // TEST 2: See if we can parse the JSON without crashing
     return new Response(JSON.stringify({ 
       success: true, 
-      processed: incoming.length,
-      cellsCreated,
-      cellsUpdated
-    }), {
-      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
-    });
+      message: "JSON parsed successfully",
+      receivedCount: count 
+    }), { status: 200 });
 
-  } catch (error) {
-    console.error("Worker Error:", error.stack); // .stack gives the line number!
-    return new Response(JSON.stringify({ error: error.message }), { status: 500 });
+  } catch (err) {
+    return new Response(JSON.stringify({ error: "JSON Parse Failed", detail: err.message }), { status: 400 });
   }
 }
+//test end
 
 // Handle DELETE request to clear all data
 // SECURED: Requires authentication token
