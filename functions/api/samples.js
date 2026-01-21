@@ -46,22 +46,18 @@ function encodeGeohash(lat, lon, precision = 7) {
 }
 
 export async function onRequestGet(context) {
-
   try {
-    // Get aggregated coverage from KV storage
-    const coverageJson = await context.env.WARDRIVE_DATA.get('coverage');
-    console.log(">>> GET Request Received!"); // Sanity check!
-    if (!coverageJson) {
-      return new Response(JSON.stringify({ coverage: {} }), {
-        headers: {
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
-        },
-      });
-    }
-    
-    const coverage = JSON.parse(coverageJson);
-    
+    // List all keys that start with 'cell:'
+    const list = await context.env.WARDRIVE_DATA.list({ prefix: 'cell:' });
+    const coverage = {};
+
+    // Fetch all cells in parallel
+    await Promise.all(list.keys.map(async (keyItem) => {
+      const data = await context.env.WARDRIVE_DATA.get(keyItem.name, { type: "json" });
+      const hash = keyItem.name.replace('cell:', '');
+      coverage[hash] = data;
+    }));
+
     return new Response(JSON.stringify({ coverage }), {
       headers: {
         'Content-Type': 'application/json',
@@ -69,11 +65,7 @@ export async function onRequestGet(context) {
       },
     });
   } catch (error) {
-    console.error("Worker Error:", error.message); // Show in Cloudflare Logs
-    return new Response(JSON.stringify({ error: error.message }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    return new Response(JSON.stringify({ error: error.message }), { status: 500 });
   }
 }
 
@@ -194,34 +186,63 @@ function computeSampleId(sample) {
 
 // Trust "Coverage" object for dedup, or handle in a single key
 
-//test - avoiding .json()
 export async function onRequestPost(context) {
-  const url = new URL(context.request.url);
-  const contentLength = context.request.headers.get("content-length");
-  
-  // This log MUST appear if the worker starts
-  console.log(`>>> Incoming POST to ${url.pathname} | Size: ${contentLength} bytes`);
-
+  console.log(">>> POST Received - Atomic Update Mode");
   try {
-    // Read as text first (avoids the heavy CPU/Memory cost of JSON parsing)
-    const rawBody = await context.request.text();
-    console.log(`>>> Successfully read ${rawBody.length} bytes of raw text`);
+    const body = await context.request.json();
+    const samples = body.samples || [];
+    if (samples.length === 0) return new Response(JSON.stringify({ success: true }), { status: 200 });
 
-    // Now try to parse only if it's not too huge
-    const data = JSON.parse(rawBody);
-    console.log(`>>> JSON parsed. Found ${data.samples?.length || 0} samples.`);
+    // 1. Group samples by geohash in memory first
+    const batchSummary = {}; 
+    for (const s of samples) {
+      const lat = s.latitude || s.lat;
+      const lng = s.longitude || s.lng;
+      if (!lat || !lng) continue;
 
-    return new Response(JSON.stringify({ 
-      success: true, 
-      bytesRead: rawBody.length 
-    }), { status: 200 });
+      const hash = encodeGeohash(lat, lng, 7);
+      if (!batchSummary[hash]) {
+        batchSummary[hash] = { received: 0, lost: 0, lastUpdate: s.timestamp, repeaters: {} };
+      }
 
-  } catch (err) {
-    console.error(">>> CRASH during read/parse:", err.message);
-    return new Response(JSON.stringify({ error: err.message }), { status: 500 });
+      const success = s.pingSuccess === true || (s.nodeId && s.nodeId !== 'Unknown');
+      success ? batchSummary[hash].received++ : batchSummary[hash].lost++;
+      
+      if (s.nodeId && s.nodeId !== 'Unknown') {
+        batchSummary[hash].repeaters[s.nodeId] = {
+          name: s.repeaterName || s.nodeId,
+          rssi: s.rssi || null,
+          lastSeen: s.timestamp
+        };
+      }
+    }
+
+    // 2. Write to KV using Atomic Keys
+    // This uses one subrequest per UNIQUE geohash found in this batch
+    const updatePromises = Object.entries(batchSummary).map(async ([hash, newData]) => {
+      const key = `cell:${hash}`;
+      const existing = await context.env.WARDRIVE_DATA.get(key, { type: "json" }) || { received: 0, lost: 0, repeaters: {} };
+      
+      // Merge logic
+      existing.received += newData.received;
+      existing.lost += newData.lost;
+      existing.lastUpdate = newData.lastUpdate;
+      existing.repeaters = { ...existing.repeaters, ...newData.repeaters };
+
+      return context.env.WARDRIVE_DATA.put(key, JSON.stringify(existing));
+    });
+
+    await Promise.all(updatePromises);
+
+    return new Response(JSON.stringify({ success: true, processed: samples.length }), {
+      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
+    });
+
+  } catch (error) {
+    console.error("Worker Error:", error.message);
+    return new Response(JSON.stringify({ error: error.message }), { status: 500 });
   }
 }
-//test end
 
 // Handle DELETE request to clear all data
 // SECURED: Requires authentication token
